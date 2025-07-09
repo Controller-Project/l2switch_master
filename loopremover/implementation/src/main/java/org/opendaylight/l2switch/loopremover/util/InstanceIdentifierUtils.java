@@ -124,7 +124,7 @@ public final class InstanceIdentifierUtils {
 
 	public static DataObjectIdentifier<Flow> generateFlowInstanceIdentifier(final NodeConnectorRef nodeConnectorRef,
 			final TableKey flowTableKey, final FlowKey flowKey) {
-		return generateFlowTableInstanceIdentifier(nodeConnectorRef, flowTableKey).toBuilder().child(Flow.class, flowKey).bu;
+		return generateFlowTableInstanceIdentifier(nodeConnectorRef, flowTableKey).toBuilder().child(Flow.class, flowKey).build();
 	}
 
 	public static InstanceIdentifier<Topology> generateTopologyInstanceIdentifier(final String topologyId) {
