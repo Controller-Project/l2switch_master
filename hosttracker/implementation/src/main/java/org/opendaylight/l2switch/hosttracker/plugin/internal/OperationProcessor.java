@@ -7,124 +7,109 @@
  */
 package org.opendaylight.l2switch.hosttracker.plugin.internal;
 
-import static java.util.Objects.requireNonNull;
-import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.MoreExecutors;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import javax.annotation.PreDestroy;
+import javax.inject.Inject;
+import javax.inject.Singleton;
+
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.opendaylight.l2switch.hosttracker.plugin.util.TransactionChainManager;
 import org.opendaylight.mdsal.binding.api.*;
-import org.opendaylight.mdsal.common.api.OptimisticLockFailedException;
+import org.osgi.service.component.annotations.Activate;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
+import org.osgi.service.component.annotations.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+@Singleton
+@Component(service = OperationProcessor.class)
 public class OperationProcessor implements AutoCloseable, Runnable {
     private static final Logger LOG = LoggerFactory.getLogger(OperationProcessor.class);
-    private static final int NUM_RETRY_SUBMIT = 2;
-    private static final int OPS_PER_CHAIN = 256;
-    private static final int QUEUE_DEPTH = 512;
+    private static final int MAX_TRANSACTION_OPERATIONS = 100;
+    private static final int OPERATION_QUEUE_DEPTH = 500;
+    private static final String TOPOLOGY_MANAGER = "l2-topo-processor";
 
-    private final BlockingQueue<HostTrackerOperation> queue = new LinkedBlockingQueue<>(QUEUE_DEPTH);
-    private final DataBroker dataBroker;
-    private final TransactionFactory transactionChain;
+    private final BlockingQueue<HostTrackerOperation> queue = new LinkedBlockingQueue<>(OPERATION_QUEUE_DEPTH);
+    private final Thread thread;
+    private final TransactionChainManager transactionChainManager;
+    private volatile boolean finishing = false;
 
-    @SuppressFBWarnings("MC_OVERRIDABLE_METHOD_CALL_IN_CONSTRUCTOR")
-    OperationProcessor(final DataBroker dataBroker) {
-        this.dataBroker = requireNonNull(dataBroker);
-        this.transactionChain = dataBroker.createTransactionChain();
+    @Inject
+    @Activate
+    @SuppressFBWarnings(value = "SC_START_IN_CTOR", justification = "Component is fully initialized")
+    public OperationProcessor(@Reference final DataBroker dataBroker) {
+        transactionChainManager = new TransactionChainManager(dataBroker, TOPOLOGY_MANAGER);
+        transactionChainManager.activateTransactionManager();
+        transactionChainManager.initialSubmitWriteTransaction();
+        thread = new Thread(this);
+        thread.setDaemon(true);
+        thread.setName("topo -l2");
+        thread.start();
+        LOG.debug("OperationProcessor started");
+    }
+
+    void enqueueOperation(final HostTrackerOperation task) {
+        LOG.info("enqueueOperation {}",task);
+        try {
+            queue.put(task);
+        } catch (InterruptedException e) {
+            LOG.warn("Interrupted while submitting task {}", task, e);
+        }
     }
 
     @Override
     public void run() {
-        boolean done = false;
-        while (!done) {
+        while (!finishing) {
             try {
                 HostTrackerOperation op = queue.take();
-                final ReadWriteTransaction txChain = dataBroker.newReadWriteTransaction();
-                if (txChain == null) {
-                    break;
-                }
+
+                LOG.debug("New {} operation available, starting transaction", op);
+
                 int ops = 0;
-                while (op != null && ops < OPS_PER_CHAIN) {
-                    op.applyOperation(txChain);
-                    ops += 1;
-                    op = queue.poll();
-                }
+                do {
+                    op.applyOperation(transactionChainManager);
 
-                submitTransaction(txChain, NUM_RETRY_SUBMIT);
-            } catch (InterruptedException e) {
-                done = true;
-            }
-        }
-        clearQueue();
-    }
-
-	/*@Override
-	public void close() {
-		final TransactionChain txChain = transactionChain.getAndSet(null);
-		if (txChain != null) {
-			txChain.close();
-		}
-	}*/
-
-	/*private void chainFailure() {
-		try {
-			final TransactionChain prevChain = transactionChain.get();
-			if (prevChain != null) {
-				prevChain.close();
-			}
-			clearQueue();
-		} catch (IllegalStateException e) {
-			LOG.warn("Failed to close chain", e);
-		}
-	}*/
-
-    public void enqueueOperation(HostTrackerOperation op) {
-        try {
-            queue.put(op);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
-
-    public void submitTransaction(final ReadWriteTransaction tx, final int tries) {
-        Futures.addCallback(tx.commit(), new FutureCallback<Object>() {
-            @Override
-            public void onSuccess(Object obj) {
-                LOG.trace("tx {} succeeded", tx.getIdentifier());
-            }
-
-            @Override
-            public void onFailure(Throwable failure) {
-                if (failure instanceof OptimisticLockFailedException) {
-                    if (tries - 1 > 0) {
-                        LOG.warn("tx {} failed, retrying", tx.getIdentifier());
-                        // do retry
-                        submitTransaction(tx, tries - 1);
+                    ops++;
+                    if (ops < MAX_TRANSACTION_OPERATIONS) {
+                        op = queue.poll();
                     } else {
-                        LOG.warn("tx {} failed, out of retries", tx.getIdentifier());
-                        // out of retries
-                        //chainFailure();
+                        op = null;
                     }
-                } else {
-                    // failed due to another type of
-                    // TransactionCommitFailedException.
-                    LOG.warn("tx {} failed: {}", tx.getIdentifier(), failure.getMessage());
-                    //chainFailure();
-                }
-            }
-        }, MoreExecutors.directExecutor());
-    }
 
-    private void clearQueue() {
+                    LOG.info("Next operation {}", op);
+                } while (op != null);
+
+                LOG.info("Processed {} operations, submitting transaction", ops);
+                if (!transactionChainManager.submitTransaction()) {
+                    cleanDataStoreOperQueue();
+                }
+            } catch (final InterruptedException e) {
+                // This should mean we're shutting down.
+                LOG.debug("Stat Manager DS Operation thread interrupted!", e);
+                finishing = true;
+            }
+        }
+        // Drain all events, making sure any blocked threads are unblocked
+        cleanDataStoreOperQueue();
+    }
+    private void cleanDataStoreOperQueue() {
         while (!queue.isEmpty()) {
             queue.poll();
         }
     }
 
-    @Override
-    public void close() throws Exception {
+    public void close() {
+        thread.interrupt();
+        try {
+            thread.join();
+        } catch (InterruptedException e) {
+            LOG.debug("Join of thread {} was interrupted", thread.getName(), e);
+        }
 
+        transactionChainManager.close();
+        LOG.debug("OperationProcessor stopped");
     }
+
 }

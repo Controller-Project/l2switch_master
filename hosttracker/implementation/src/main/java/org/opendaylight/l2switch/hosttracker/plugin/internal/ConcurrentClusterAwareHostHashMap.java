@@ -112,7 +112,7 @@ public class ConcurrentClusterAwareHostHashMap {
         for (final Map.Entry<DataObjectIdentifier<Node>, HostId> e : this.instanceIDs.entrySet()) {
             for (Host h : hosts) {
                 if (e.getValue().equals(h.getId())) {
-                    this.opProcessor.enqueueOperation(tx -> tx.delete(LogicalDatastoreType.OPERATIONAL, e.getKey()));
+                    this.opProcessor.enqueueOperation(tx -> tx.addDeleteOperationToTxChain(LogicalDatastoreType.OPERATIONAL, e.getKey()));
                     this.hostHashMap.remove(e.getValue());
                     break;
                 }
@@ -132,7 +132,7 @@ public class ConcurrentClusterAwareHostHashMap {
         final Node hostNode = host.getHostNode();
         final DataObjectIdentifier<Node> buildNodeIID = Utilities.buildNodeIID(hostNode.key(), topologyId);
         this.opProcessor.enqueueOperation(
-            tx -> tx.mergeParentStructureMerge(LogicalDatastoreType.OPERATIONAL, buildNodeIID, hostNode));
+            tx -> tx.mergeToTransaction(LogicalDatastoreType.OPERATIONAL, buildNodeIID, hostNode,true));
         putLocally(buildNodeIID, host);
         this.instanceIDs.put(buildNodeIID, host.getId());
         LOG.trace("Enqueued for MD-SAL transaction {}", hostNode.getNodeId());
@@ -150,7 +150,7 @@ public class ConcurrentClusterAwareHostHashMap {
             final Node hostNode = h.getHostNode();
             final DataObjectIdentifier<Node> buildNodeIID = Utilities.buildNodeIID(hostNode.key(), topologyId);
             this.opProcessor.enqueueOperation(
-                tx -> tx.mergeParentStructureMerge(LogicalDatastoreType.OPERATIONAL, buildNodeIID, hostNode));
+                tx -> tx.mergeToTransaction(LogicalDatastoreType.OPERATIONAL, buildNodeIID, hostNode,true));
             putLocally(buildNodeIID, h);
             this.instanceIDs.put(buildNodeIID, h.getId());
             LOG.trace("Putting MD-SAL {}", hostNode.getNodeId());
@@ -170,7 +170,7 @@ public class ConcurrentClusterAwareHostHashMap {
         final Node hostNode = host.getHostNode();
         final DataObjectIdentifier<Node> buildNodeIID = Utilities.buildNodeIID(hostNode.key(), topologyId);
         this.opProcessor.enqueueOperation(
-            tx -> tx.mergeParentStructureMerge(LogicalDatastoreType.OPERATIONAL, buildNodeIID, hostNode));
+            tx -> tx.mergeToTransaction(LogicalDatastoreType.OPERATIONAL, buildNodeIID, hostNode,true));
         LOG.trace("Putting MD-SAL {}", hostNode.getNodeId());
         return putLocally(buildNodeIID, host);
     }
@@ -188,7 +188,7 @@ public class ConcurrentClusterAwareHostHashMap {
         if (removedValue != null) {
             Node hostNode = removedValue.getHostNode();
             final DataObjectIdentifier<Node> hnIID = Utilities.buildNodeIID(hostNode.key(), topologyId);
-            this.opProcessor.enqueueOperation(tx -> tx.delete(LogicalDatastoreType.OPERATIONAL, hnIID));
+            this.opProcessor.enqueueOperation(tx -> tx.addDeleteOperationToTxChain(LogicalDatastoreType.OPERATIONAL, hnIID));
             this.instanceIDs.remove(hnIID);
         }
         return removedValue;
@@ -208,7 +208,7 @@ public class ConcurrentClusterAwareHostHashMap {
      */
     public synchronized void clear() {
         for (final Map.Entry<? extends DataObjectIdentifier<Node>, HostId> e : this.instanceIDs.entrySet()) {
-            this.opProcessor.enqueueOperation(tx -> tx.delete(LogicalDatastoreType.OPERATIONAL, e.getKey()));
+            this.opProcessor.enqueueOperation(tx -> tx.addDeleteOperationToTxChain(LogicalDatastoreType.OPERATIONAL, e.getKey()));
         }
         this.hostHashMap.clear();
     }

@@ -65,8 +65,8 @@ public final class Utilities {
             .child(Node.class, nk).build();
     }
 
-    public static InstanceIdentifier<Link> buildLinkIID(LinkKey lk, String topologyId) {
-        return InstanceIdentifier.builder(NetworkTopology.class)
+    public static DataObjectIdentifier<Link> buildLinkIID(LinkKey lk, String topologyId) {
+        return DataObjectIdentifier.builder(NetworkTopology.class)
             .child(Topology.class, new TopologyKey(new TopologyId(topologyId)))
             .child(Link.class, lk).build();
     }

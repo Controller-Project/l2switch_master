@@ -331,17 +331,17 @@ public class HostTrackerImpl implements DataTreeChangeListener<DataObject> {
     private void writeDataToDataStore(List<Link> linksToAdd, List<Link> linksToRemove) {
         if (linksToAdd != null) {
             for (final Link l : linksToAdd) {
-                final InstanceIdentifier<Link> lIID = Utilities.buildLinkIID(l.key(), topologyId);
+                final DataObjectIdentifier<Link> lIID = Utilities.buildLinkIID(l.key(), topologyId);
                 LOG.trace("Writing link from MD_SAL: {}", lIID.toString());
                 opProcessor.enqueueOperation(
-                    tx -> tx.mergeParentStructureMerge(LogicalDatastoreType.OPERATIONAL, lIID, l));
+                    tx -> tx.mergeToTransaction(LogicalDatastoreType.OPERATIONAL, lIID, l,true));
             }
         }
         if (linksToRemove != null) {
             for (Link l : linksToRemove) {
-                final InstanceIdentifier<Link> lIID = Utilities.buildLinkIID(l.key(), topologyId);
+                final DataObjectIdentifier<Link> lIID = Utilities.buildLinkIID(l.key(), topologyId);
                 LOG.trace("Removing link from MD_SAL: {}", lIID.toString());
-                opProcessor.enqueueOperation(tx -> tx.delete(LogicalDatastoreType.OPERATIONAL,  lIID));
+                opProcessor.enqueueOperation(tx -> tx.addDeleteOperationToTxChain(LogicalDatastoreType.OPERATIONAL,  lIID));
             }
         }
     }
