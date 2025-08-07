@@ -13,10 +13,10 @@
   <version>0.8.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
-  <properties>
+  <!--<properties>
     <odlparent.checkstyle.enforce>false</odlparent.checkstyle.enforce>
     <checkstyle.skip>true</checkstyle.skip>
-  </properties>
+  </properties>-->
 
   <dependencyManagement>
     <dependencies>

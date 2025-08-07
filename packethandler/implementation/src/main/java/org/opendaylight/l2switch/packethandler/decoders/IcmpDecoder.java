@@ -1,9 +1,9 @@
 /*
  * Copyright (c) 2016 Hewlett Packard Enterprise, Co. and others. All rights reserved.
  *
- * This program and the accompanying materials are made available under the
- * terms of the Eclipse Public License v1.0 which accompanies this distribution,
- * and is available at http://www.eclipse.org/legal/epl-v10.html
+ * This program and the accompanying materials are made available under the terms of the Eclipse
+ * Public License v1.0 which accompanies this distribution, and is available at
+ * http://www.eclipse.org/legal/epl-v10.html
  */
 package org.opendaylight.l2switch.packethandler.decoders;
 
@@ -28,95 +28,98 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class IcmpDecoder extends AbstractPacketDecoder<Ipv4PacketReceived, IcmpPacketReceived>
-        implements Listener<Ipv4PacketReceived> {
+    implements Listener<Ipv4PacketReceived> {
 
-    private static final Logger LOG = LoggerFactory.getLogger(IcmpDecoder.class);
+  private static final Logger LOG = LoggerFactory.getLogger(IcmpDecoder.class);
 
-    public IcmpDecoder(NotificationPublishService notificationProviderService,
-                       NotificationService notificationService) {
-        super(IcmpPacketReceived.class, notificationProviderService, notificationService);
+  public IcmpDecoder(NotificationPublishService notificationProviderService,
+      NotificationService notificationService) {
+    super(IcmpPacketReceived.class, notificationProviderService, notificationService);
+  }
+
+  /**
+   * Decode an EthernetPacket into an IcmpPacket.
+   */
+  @Override
+  public IcmpPacketReceived decode(Ipv4PacketReceived ipv4PacketReceived) {
+    IcmpPacketReceivedBuilder icmpReceivedBuilder = new IcmpPacketReceivedBuilder();
+
+    // Find the latest packet in the packet-chain, which is an
+    // EthernetPacket
+    List<PacketChain> packetChainList = ipv4PacketReceived.getPacketChain();
+    Ipv4Packet ipv4Packet =
+        (Ipv4Packet) packetChainList.get(packetChainList.size() - 1).getPacket();
+    int bitOffset = ipv4Packet.getPayloadOffset().intValue() * NetUtils.NUM_BITS_IN_A_BYTE;
+    byte[] data = ipv4PacketReceived.getPayload();
+
+    IcmpPacketBuilder builder = new IcmpPacketBuilder();
+    try {
+      // Decode the ICMP type and ICMP code
+      builder.setType(BitBufferHelper.getUint8(BitBufferHelper.getBits(data, bitOffset + 0, 8)));
+      builder.setCode(BitBufferHelper.getUint8(BitBufferHelper.getBits(data, bitOffset + 8, 8)));
+
+      // Decode the checksum
+      builder.setCrc(BitBufferHelper.getUint16(BitBufferHelper.getBits(data, bitOffset + 16, 16)));
+
+      // Decode the identifier and sequence number
+      builder.setIdentifier(
+          BitBufferHelper.getUint16(BitBufferHelper.getBits(data, bitOffset + 32, 16)));
+      builder.setSequenceNumber(
+          BitBufferHelper.getUint16(BitBufferHelper.getBits(data, bitOffset + 48, 16)));
+
+      // Decode the ICMP Payload
+      int payloadStartInBits = bitOffset + 64;
+      int payloadEndInBits = data.length * NetUtils.NUM_BITS_IN_A_BYTE - payloadStartInBits
+          - 4 * NetUtils.NUM_BITS_IN_A_BYTE;
+      int start = payloadStartInBits / NetUtils.NUM_BITS_IN_A_BYTE;
+      int end = start + payloadEndInBits / NetUtils.NUM_BITS_IN_A_BYTE;
+      builder.setPayloadOffset(Uint32.valueOf(start));
+      builder.setPayloadLength(Uint32.valueOf(end - start));
+    } catch (BufferException e) {
+      LOG.debug("Exception while decoding ICMP packet", e);
     }
 
-    /**
-     * Decode an EthernetPacket into an IcmpPacket.
-     */
-    @Override
-    public IcmpPacketReceived decode(Ipv4PacketReceived ipv4PacketReceived) {
-        IcmpPacketReceivedBuilder icmpReceivedBuilder = new IcmpPacketReceivedBuilder();
+    // build icmp
+    packetChainList.add(new PacketChainBuilder().setPacket(builder.build()).build());
+    icmpReceivedBuilder.setPacketChain(packetChainList);
 
-        // Find the latest packet in the packet-chain, which is an
-        // EthernetPacket
-        List<PacketChain> packetChainList = ipv4PacketReceived.getPacketChain();
-        Ipv4Packet ipv4Packet = (Ipv4Packet) packetChainList.get(packetChainList.size() - 1).getPacket();
-        int bitOffset = ipv4Packet.getPayloadOffset().intValue() * NetUtils.NUM_BITS_IN_A_BYTE;
-        byte[] data = ipv4PacketReceived.getPayload();
+    // carry forward the original payload.
+    icmpReceivedBuilder.setPayload(ipv4PacketReceived.getPayload());
 
-        IcmpPacketBuilder builder = new IcmpPacketBuilder();
-        try {
-            // Decode the ICMP type and ICMP code
-            builder.setType(BitBufferHelper.getUint8(BitBufferHelper.getBits(data, bitOffset + 0, 8)));
-            builder.setCode(BitBufferHelper.getUint8(BitBufferHelper.getBits(data, bitOffset + 8, 8)));
+    return icmpReceivedBuilder.build();
+  }
 
-            // Decode the checksum
-            builder.setCrc(BitBufferHelper.getUint16(BitBufferHelper.getBits(data, bitOffset + 16, 16)));
+  @Override
+  public Listener<Ipv4PacketReceived> getConsumedListener() {
+    return this;
+  }
 
-            // Decode the identifier and sequence number
-            builder.setIdentifier(BitBufferHelper.getUint16(BitBufferHelper.getBits(data, bitOffset + 32, 16)));
-            builder.setSequenceNumber(BitBufferHelper.getUint16(BitBufferHelper.getBits(data, bitOffset + 48, 16)));
+  @Override
+  public Class<IcmpPacketReceived> getPacketType() {
+    return IcmpPacketReceived.class;
+  }
 
-            // Decode the ICMP Payload
-            int payloadStartInBits = bitOffset + 64;
-            int payloadEndInBits = data.length * NetUtils.NUM_BITS_IN_A_BYTE - payloadStartInBits - 4
-                    * NetUtils.NUM_BITS_IN_A_BYTE;
-            int start = payloadStartInBits / NetUtils.NUM_BITS_IN_A_BYTE;
-            int end = start + payloadEndInBits / NetUtils.NUM_BITS_IN_A_BYTE;
-            builder.setPayloadOffset(Uint32.valueOf(start));
-            builder.setPayloadLength(Uint32.valueOf(end - start));
-        } catch (BufferException e) {
-            LOG.debug("Exception while decoding ICMP packet", e);
-        }
+  @Override
+  public void onNotification(Ipv4PacketReceived notification) {
+    decodeAndPublish(notification);
+  }
 
-        // build icmp
-        packetChainList.add(new PacketChainBuilder().setPacket(builder.build()).build());
-        icmpReceivedBuilder.setPacketChain(packetChainList);
-
-        // carry forward the original payload.
-        icmpReceivedBuilder.setPayload(ipv4PacketReceived.getPayload());
-
-        return icmpReceivedBuilder.build();
+  @Override
+  public boolean canDecode(Ipv4PacketReceived ipv4PacketReceived) {
+    if (ipv4PacketReceived == null || ipv4PacketReceived.getPacketChain() == null) {
+      return false;
     }
 
-    @Override
-    public Listener<Ipv4PacketReceived> getConsumedListener() {
-        return this;
+    // Only decode the latest packet in the chain
+    Ipv4Packet ipv4Packet = null;
+    if (!ipv4PacketReceived.getPacketChain().isEmpty()) {
+      Packet packet = ipv4PacketReceived.getPacketChain()
+          .get(ipv4PacketReceived.getPacketChain().size() - 1).getPacket();
+      if (packet instanceof Ipv4Packet) {
+        ipv4Packet = (Ipv4Packet) packet;
+      }
     }
 
-    @Override
-    public Class<IcmpPacketReceived> getPacketType() {
-        return IcmpPacketReceived.class;
-    }
-
-    @Override
-    public void onNotification(Ipv4PacketReceived notification) {
-        decodeAndPublish(notification);
-    }
-
-    @Override
-    public boolean canDecode(Ipv4PacketReceived ipv4PacketReceived) {
-        if (ipv4PacketReceived == null || ipv4PacketReceived.getPacketChain() == null) {
-            return false;
-        }
-
-        // Only decode the latest packet in the chain
-        Ipv4Packet ipv4Packet = null;
-        if (!ipv4PacketReceived.getPacketChain().isEmpty()) {
-            Packet packet = ipv4PacketReceived.getPacketChain().get(ipv4PacketReceived.getPacketChain().size() - 1)
-                    .getPacket();
-            if (packet instanceof Ipv4Packet) {
-                ipv4Packet = (Ipv4Packet) packet;
-            }
-        }
-
-        return ipv4Packet != null && KnownIpProtocols.Icmp.equals(ipv4Packet.getProtocol());
-    }
+    return ipv4Packet != null && KnownIpProtocols.Icmp.equals(ipv4Packet.getProtocol());
+  }
 }
